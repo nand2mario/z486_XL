@@ -1,0 +1,219 @@
+Subject: [PATCH] drm: xlnx: support fixed-rate live DisplayPort audio
+
+The z486 fabric supplies a continuous 48 kHz IEC60958 stream through the
+ZynqMP live audio AXI input. Select the PL source and initialize the DP audio
+path directly when the device graph connects the live-audio port.
+
+Upstream-Status: Inappropriate [z486 fixed-rate live-audio integration]
+---
+diff --git a/drivers/gpu/drm/xlnx/zynqmp_disp.c b/drivers/gpu/drm/xlnx/zynqmp_disp.c
+index a3b536329..0b1d3d901 100644
+--- a/drivers/gpu/drm/xlnx/zynqmp_disp.c
++++ b/drivers/gpu/drm/xlnx/zynqmp_disp.c
+@@ -556,7 +556,7 @@ static void zynqmp_disp_avbuf_disable_channels(struct zynqmp_disp *disp)
+  * zynqmp_disp_avbuf_enable_audio - Enable audio
+  * @disp: Display controller
+  *
+- * Enable all audio buffers with a non-live (memory) source.
++ * Enable audio from the connected live PL source or from memory.
+  */
+ static void zynqmp_disp_avbuf_enable_audio(struct zynqmp_disp *disp)
+ {
+@@ -564,8 +564,14 @@ static void zynqmp_disp_avbuf_enable_audio(struct zynqmp_disp *disp)
+ 
+ 	val = zynqmp_disp_avbuf_read(disp, ZYNQMP_DISP_AV_BUF_OUTPUT);
+ 	val &= ~ZYNQMP_DISP_AV_BUF_OUTPUT_AUD1_MASK;
+-	val |= ZYNQMP_DISP_AV_BUF_OUTPUT_AUD1_MEM;
+-	val |= ZYNQMP_DISP_AV_BUF_OUTPUT_AUD2_EN;
++	if (disp->dpsub->connected_ports &
++	    BIT(ZYNQMP_DPSUB_PORT_LIVE_AUDIO)) {
++		val |= ZYNQMP_DISP_AV_BUF_OUTPUT_AUD1_PL;
++		val &= ~ZYNQMP_DISP_AV_BUF_OUTPUT_AUD2_EN;
++	} else {
++		val |= ZYNQMP_DISP_AV_BUF_OUTPUT_AUD1_MEM;
++		val |= ZYNQMP_DISP_AV_BUF_OUTPUT_AUD2_EN;
++	}
+ 	zynqmp_disp_avbuf_write(disp, ZYNQMP_DISP_AV_BUF_OUTPUT, val);
+ }
+ 
+@@ -1344,6 +1350,7 @@ void zynqmp_disp_enable(struct zynqmp_disp *disp)
+ 					     disp->dpsub->vid_clk_from_ps);
+ 	zynqmp_disp_avbuf_enable_channels(disp);
+ 	zynqmp_disp_avbuf_enable_audio(disp);
++	zynqmp_audio_enable_live(disp->dpsub);
+ }
+ 
+ /**
+@@ -1352,6 +1359,7 @@ void zynqmp_disp_enable(struct zynqmp_disp *disp)
+  */
+ void zynqmp_disp_disable(struct zynqmp_disp *disp)
+ {
++	zynqmp_audio_disable_live(disp->dpsub);
+ 	zynqmp_disp_avbuf_disable_audio(disp);
+ 	zynqmp_disp_avbuf_disable_channels(disp);
+ 	zynqmp_disp_avbuf_disable(disp);
+diff --git a/drivers/gpu/drm/xlnx/zynqmp_dp.c b/drivers/gpu/drm/xlnx/zynqmp_dp.c
+--- a/drivers/gpu/drm/xlnx/zynqmp_dp.c
++++ b/drivers/gpu/drm/xlnx/zynqmp_dp.c
+@@ -1387,6 +1387,15 @@ void zynqmp_dp_audio_enable(struct zynqmp_dp *dp)
+ 	zynqmp_dp_write(dp, ZYNQMP_DP_TX_AUDIO_CONTROL, 1);
+ }
+ 
++void zynqmp_dp_audio_set_infoframe(struct zynqmp_dp *dp)
++{
++	/* IEC60958 LPCM, stereo, 48 kHz, 16-bit samples. */
++	zynqmp_dp_write(dp, ZYNQMP_DP_TX_AUDIO_INFO_DATA + 0, 0x441b8400);
++	zynqmp_dp_write(dp, ZYNQMP_DP_TX_AUDIO_INFO_DATA + 4, 0x00000d11);
++	for (unsigned int offset = 8; offset < 32; offset += 4)
++		zynqmp_dp_write(dp, ZYNQMP_DP_TX_AUDIO_INFO_DATA + offset, 0);
++}
++
+ void zynqmp_dp_audio_disable(struct zynqmp_dp *dp)
+ {
+ 	zynqmp_dp_write(dp, ZYNQMP_DP_TX_AUDIO_CONTROL, 0);
+diff --git a/drivers/gpu/drm/xlnx/zynqmp_dp.h b/drivers/gpu/drm/xlnx/zynqmp_dp.h
+--- a/drivers/gpu/drm/xlnx/zynqmp_dp.h
++++ b/drivers/gpu/drm/xlnx/zynqmp_dp.h
+@@ -25,6 +25,7 @@ void zynqmp_dp_remove(struct zynqmp_dpsub *dpsub);
+ void zynqmp_dp_audio_set_channels(struct zynqmp_dp *dp,
+ 				  unsigned int num_channels);
+ void zynqmp_dp_audio_enable(struct zynqmp_dp *dp);
++void zynqmp_dp_audio_set_infoframe(struct zynqmp_dp *dp);
+ void zynqmp_dp_audio_disable(struct zynqmp_dp *dp);
+ 
+ void zynqmp_dp_audio_write_n_m(struct zynqmp_dp *dp);
+diff --git a/drivers/gpu/drm/xlnx/zynqmp_dp_audio.c b/drivers/gpu/drm/xlnx/zynqmp_dp_audio.c
+index 1a46a0461..026050992 100644
+--- a/drivers/gpu/drm/xlnx/zynqmp_dp_audio.c
++++ b/drivers/gpu/drm/xlnx/zynqmp_dp_audio.c
+@@ -60,6 +60,7 @@ struct zynqmp_dpsub_audio {
+ 	u32 current_rate;
+ 
+ 	u16 volumes[2];
++	bool live_enabled;
+ };
+ 
+ static const struct snd_pcm_hardware zynqmp_dp_pcm_hw = {
+@@ -296,6 +297,73 @@ static const struct snd_soc_component_driver zynqmp_dp_component_driver = {
+ 	.write			= zynqmp_dp_dai_write,
+ };
+ 
++void zynqmp_audio_enable_live(struct zynqmp_dpsub *dpsub)
++{
++	struct zynqmp_dpsub_audio *audio = dpsub->audio;
++	struct snd_aes_iec958 iec = { 0 };
++	const u32 sample_rate = 48000;
++	unsigned long rate, target, rate_diff;
++	int ret;
++
++	if (!audio || !(dpsub->connected_ports &
++			BIT(ZYNQMP_DPSUB_PORT_LIVE_AUDIO)))
++		return;
++
++	guard(mutex)(&audio->enable_lock);
++	if (audio->live_enabled)
++		return;
++
++	ret = clk_prepare_enable(dpsub->aud_clk);
++	if (ret) {
++		dev_err(dpsub->dev, "can't enable live aud_clk: %d\n", ret);
++		return;
++	}
++	target = sample_rate * ZYNQMP_DISP_AUD_SMPL_RATE_TO_CLK;
++	rate = clk_get_rate(dpsub->aud_clk);
++	rate_diff = rate > target ? rate - target : target - rate;
++	if (rate_diff > target / 1000) {
++		dev_err(dpsub->dev,
++			"live aud_clk rate %lu differs from %lu by over 1000 ppm\n",
++			rate, target);
++		clk_disable_unprepare(dpsub->aud_clk);
++		return;
++	}
++
++	pm_runtime_get_sync(dpsub->dev);
++	zynqmp_dp_audio_write(audio, ZYNQMP_DISP_AUD_MIXER_VOLUME,
++			      ZYNQMP_DISP_AUD_MIXER_VOLUME_NO_SCALE);
++	zynqmp_dp_audio_write(audio, ZYNQMP_DISP_AUD_SOFT_RESET, 0);
++	zynqmp_dp_audio_set_channels(dpsub->dp, 2);
++	zynqmp_dp_audio_write_n_m(dpsub->dp);
++	zynqmp_dp_audio_set_infoframe(dpsub->dp);
++
++	iec.status[3] = IEC958_AES3_CON_FS_48000;
++	for (unsigned int i = 0; i < AES_IEC958_STATUS_SIZE / 4; ++i) {
++		u32 value = (iec.status[(i * 4) + 0] << 0) |
++			    (iec.status[(i * 4) + 1] << 8) |
++			    (iec.status[(i * 4) + 2] << 16) |
++			    (iec.status[(i * 4) + 3] << 24);
++
++		zynqmp_dp_audio_write(audio, ZYNQMP_DISP_AUD_CH_STATUS(i),
++				      value);
++	}
++	zynqmp_dp_audio_enable(dpsub->dp);
++	audio->live_enabled = true;
++}
++
++void zynqmp_audio_disable_live(struct zynqmp_dpsub *dpsub)
++{
++	struct zynqmp_dpsub_audio *audio = dpsub->audio;
++
++	if (!audio || !audio->live_enabled)
++		return;
++	guard(mutex)(&audio->enable_lock);
++	zynqmp_dp_audio_disable(dpsub->dp);
++	pm_runtime_put(dpsub->dev);
++	clk_disable_unprepare(dpsub->aud_clk);
++	audio->live_enabled = false;
++}
++
+ int zynqmp_audio_init(struct zynqmp_dpsub *dpsub)
+ {
+ 	struct platform_device *pdev = to_platform_device(dpsub->dev);
+@@ -338,6 +405,10 @@ int zynqmp_audio_init(struct zynqmp_dpsub *dpsub)
+ 	if (IS_ERR(audio->base))
+ 		return PTR_ERR(audio->base);
+ 
++	/* Live audio is supplied by PL and does not need a DMA PCM device. */
++	if (dpsub->connected_ports & BIT(ZYNQMP_DPSUB_PORT_LIVE_AUDIO))
++		return 0;
++
+ 	/* Create CPU DAI */
+ 
+ 	audio->dai_driver = (struct snd_soc_dai_driver) {
+diff --git a/drivers/gpu/drm/xlnx/zynqmp_dpsub.c b/drivers/gpu/drm/xlnx/zynqmp_dpsub.c
+index 1c56dbb56..238a271e0 100644
+--- a/drivers/gpu/drm/xlnx/zynqmp_dpsub.c
++++ b/drivers/gpu/drm/xlnx/zynqmp_dpsub.c
+@@ -168,8 +168,11 @@ static int zynqmp_dpsub_parse_dt(struct zynqmp_dpsub *dpsub)
+ 		dpsub->dma_enabled = true;
+ 	}
+ 
+-	if (dpsub->connected_ports & BIT(ZYNQMP_DPSUB_PORT_LIVE_AUDIO))
+-		dev_warn(dpsub->dev, "live audio unsupported, ignoring\n");
++	if ((dpsub->connected_ports & BIT(ZYNQMP_DPSUB_PORT_LIVE_AUDIO)) &&
++	    dpsub->aud_clk_from_ps) {
++		dev_err(dpsub->dev, "live audio input requires PL clock\n");
++		return -EINVAL;
++	}
+ 
+ 	if ((dpsub->connected_ports & BIT(ZYNQMP_DPSUB_PORT_OUT_VIDEO)) ||
+ 	    (dpsub->connected_ports & BIT(ZYNQMP_DPSUB_PORT_OUT_AUDIO)))
+diff --git a/drivers/gpu/drm/xlnx/zynqmp_dpsub.h b/drivers/gpu/drm/xlnx/zynqmp_dpsub.h
+index d771b8b19..9a463141b 100644
+--- a/drivers/gpu/drm/xlnx/zynqmp_dpsub.h
++++ b/drivers/gpu/drm/xlnx/zynqmp_dpsub.h
+@@ -89,9 +89,13 @@ struct zynqmp_dpsub {
+ #ifdef CONFIG_DRM_ZYNQMP_DPSUB_AUDIO
+ int zynqmp_audio_init(struct zynqmp_dpsub *dpsub);
+ void zynqmp_audio_uninit(struct zynqmp_dpsub *dpsub);
++void zynqmp_audio_enable_live(struct zynqmp_dpsub *dpsub);
++void zynqmp_audio_disable_live(struct zynqmp_dpsub *dpsub);
+ #else
+ static inline int zynqmp_audio_init(struct zynqmp_dpsub *dpsub) { return 0; }
+ static inline void zynqmp_audio_uninit(struct zynqmp_dpsub *dpsub) { }
++static inline void zynqmp_audio_enable_live(struct zynqmp_dpsub *dpsub) { }
++static inline void zynqmp_audio_disable_live(struct zynqmp_dpsub *dpsub) { }
+ #endif
+ 
+ void zynqmp_dpsub_release(struct zynqmp_dpsub *dpsub);
+-- 
+2.43.0

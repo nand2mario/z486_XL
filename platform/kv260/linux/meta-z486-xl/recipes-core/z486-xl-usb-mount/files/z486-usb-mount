@@ -1,0 +1,96 @@
+#!/bin/sh
+set -eu
+
+action=${1:-}
+name=${2:-}
+state_dir=/run/z486-usb-mount
+
+case "$name" in
+    ''|*[!A-Za-z0-9._-]*) echo "Invalid block-device name: $name" >&2; exit 2 ;;
+esac
+
+device=/dev/$name
+state_file=$state_dir/$name
+
+unmount_device() {
+    [ -r "$state_file" ] || return 0
+    mount_dir=$(cat "$state_file")
+    case "$mount_dir" in /media/*) ;; *) return 1 ;; esac
+    if findmnt -rn -M "$mount_dir" >/dev/null 2>&1; then
+        umount "$mount_dir" || umount -l "$mount_dir"
+    fi
+    rmdir "$mount_dir" 2>/dev/null || true
+    rm -f "$state_file"
+}
+
+case "$action" in
+    unmount)
+        unmount_device
+        exit 0
+        ;;
+    mount) ;;
+    *) echo "Usage: $0 {mount|unmount} DEVICE" >&2; exit 2 ;;
+esac
+
+# A whole-disk add event normally precedes its partition events. Wait briefly
+# for filesystem metadata, then leave disks containing only a partition table
+# alone; their partitions receive separate service instances.
+filesystem=
+for delay in 0 1 1 1 1; do
+    [ "$delay" -eq 0 ] || sleep "$delay"
+    [ -b "$device" ] || continue
+    filesystem=$(blkid -s TYPE -o value "$device" 2>/dev/null || true)
+    [ -n "$filesystem" ] && break
+done
+[ -n "$filesystem" ] || exit 0
+
+case "$filesystem" in
+    vfat|exfat|ntfs|ntfs3|ext2|ext3|ext4) ;;
+    *) echo "Unsupported USB filesystem $filesystem on $device" >&2; exit 0 ;;
+esac
+
+label=$(blkid -s LABEL -o value "$device" 2>/dev/null || true)
+label=$(printf '%s' "$label" | sed 's/[^A-Za-z0-9._-]/_/g; s/^_*//; s/_*$//' | cut -c1-48)
+case "$label" in ''|.|..) label=usb-$name ;; esac
+mount_dir=/media/$label
+
+# Do not follow a pre-existing symlink or hide a different mounted filesystem.
+if [ -L "$mount_dir" ] || { [ -e "$mount_dir" ] && [ ! -d "$mount_dir" ]; }; then
+    mount_dir=/media/$label-$name
+fi
+if findmnt -rn -M "$mount_dir" >/dev/null 2>&1; then
+    current=$(findmnt -rn -o SOURCE -M "$mount_dir")
+    [ "$(readlink -f "$current")" = "$(readlink -f "$device")" ] || mount_dir=/media/$label-$name
+fi
+
+# The device-name suffix makes this fallback unique. Refuse any remaining
+# collision instead of mounting over another filesystem or following a link.
+if [ -L "$mount_dir" ] || { [ -e "$mount_dir" ] && [ ! -d "$mount_dir" ]; }; then
+    echo "Unsafe USB mount point: $mount_dir" >&2
+    exit 1
+fi
+if findmnt -rn -M "$mount_dir" >/dev/null 2>&1; then
+    current=$(findmnt -rn -o SOURCE -M "$mount_dir")
+    if [ "$(readlink -f "$current")" != "$(readlink -f "$device")" ]; then
+        echo "USB mount point already in use: $mount_dir" >&2
+        exit 1
+    fi
+    install -d -m 0755 "$state_dir"
+    printf '%s\n' "$mount_dir" > "$state_file"
+    exit 0
+fi
+
+install -d -m 0755 "$state_dir" "$mount_dir"
+case "$filesystem" in
+    vfat|exfat)
+        mount -t "$filesystem" -o nosuid,nodev,uid=0,gid=0,fmask=0022,dmask=0022 "$device" "$mount_dir"
+        ;;
+    ntfs|ntfs3)
+        mount -t ntfs3 -o nosuid,nodev,uid=0,gid=0,umask=0022 "$device" "$mount_dir"
+        ;;
+    *)
+        mount -t "$filesystem" -o nosuid,nodev "$device" "$mount_dir"
+        ;;
+esac
+printf '%s\n' "$mount_dir" > "$state_file"
+logger -t z486-usb-mount "Mounted $device ($filesystem) at $mount_dir"

@@ -1,0 +1,102 @@
+#!/bin/sh
+
+set -eu
+
+usage() {
+    cat <<'EOF'
+Usage: z486-thermal [--once] [--interval SECONDS]
+
+Monitor the KV260 AMS temperatures and fan controller. The display refreshes
+once per second by default; press Ctrl+C to exit.
+EOF
+}
+
+find_hwmon() {
+    wanted=$1
+    for directory in /sys/class/hwmon/hwmon*; do
+        [ -r "$directory/name" ] || continue
+        if [ "$(cat "$directory/name")" = "$wanted" ]; then
+            printf '%s\n' "$directory"
+            return 0
+        fi
+    done
+    return 1
+}
+
+once=0
+interval=1
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --once)
+            once=1
+            ;;
+        --interval)
+            [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+            interval=$2
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            usage >&2
+            exit 2
+            ;;
+    esac
+    shift
+done
+
+case "$interval" in
+    ''|*[!0-9]*)
+        printf 'z486-thermal: interval must be a positive integer\n' >&2
+        exit 2
+        ;;
+    0)
+        printf 'z486-thermal: interval must be greater than zero\n' >&2
+        exit 2
+        ;;
+esac
+
+ams=$(find_hwmon ams) || {
+    printf 'z486-thermal: AMS temperature sensors not found\n' >&2
+    exit 1
+}
+fan=$(find_hwmon pwmfan) || {
+    printf 'z486-thermal: PWM fan controller not found\n' >&2
+    exit 1
+}
+
+show_readings() {
+    printf 'z486 XL thermal monitor  %s\n\n' "$(date '+%Y-%m-%d %H:%M:%S')"
+    for number in 1 2 3; do
+        prefix="$ams/temp$number"
+        [ -r "${prefix}_input" ] || continue
+        value=$(cat "${prefix}_input")
+        if [ -r "${prefix}_label" ]; then
+            label=$(cat "${prefix}_label")
+        else
+            label="Temp_$number"
+        fi
+        printf '%-12s %3d.%03d C\n' \
+            "$label" "$((value / 1000))" "$((value % 1000))"
+    done
+
+    pwm=$(cat "$fan/pwm1")
+    enabled=$(cat "$fan/pwm1_enable" 2>/dev/null || printf '?')
+    control=$(systemctl is-active fancontrol 2>/dev/null || true)
+    printf '\n%-12s %3s/255\n' 'Fan PWM' "$pwm"
+    printf '%-12s %s\n' 'PWM enabled' "$enabled"
+    printf '%-12s %s\n' 'fancontrol' "${control:-unknown}"
+}
+
+if [ "$once" -eq 1 ]; then
+    show_readings
+    exit 0
+fi
+
+while :; do
+    printf '\033[H\033[2J'
+    show_readings
+    sleep "$interval"
+done

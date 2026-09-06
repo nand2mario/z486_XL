@@ -1,0 +1,1 @@
+ACTION=="add", SUBSYSTEM=="block", ENV{ID_BUS}=="usb", KERNEL=="sd*", TAG+="systemd", ENV{SYSTEMD_WANTS}+="z486-usb-mount@%k.service"

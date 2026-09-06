@@ -1,0 +1,11 @@
+[Unit]
+Description=Mount USB storage device /dev/%I
+BindsTo=dev-%i.device
+After=dev-%i.device
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/z486-usb-mount mount %I
+ExecStop=/usr/sbin/z486-usb-mount unmount %I
+TimeoutStopSec=15

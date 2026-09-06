@@ -1,0 +1,137 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+    fragment@0 {
+        target = <&fpga_full>;
+
+        __overlay__ {
+            #address-cells = <2>;
+            #size-cells = <2>;
+            firmware-name = "z486_kv260.bit.bin";
+            resets = <&zynqmp_reset 116>, <&zynqmp_reset 117>,
+                     <&zynqmp_reset 118>, <&zynqmp_reset 119>;
+
+            clk_wiz_0: clock-controller@a0030000 {
+                compatible = "xlnx,clocking-wizard-v6.0";
+                reg = <0x0 0xa0030000 0x0 0x10000>;
+                #clock-cells = <1>;
+                clocks = <&zynqmp_clk 71>, <&zynqmp_clk 71>;
+                clock-names = "clk_in1", "s_axi_aclk";
+                xlnx,nr-outputs = <1>;
+                xlnx,speed-grade = <2>;
+            };
+
+            audio_clk: audio-clock {
+                compatible = "fixed-clock";
+                #clock-cells = <0>;
+                clock-frequency = <24576025>;
+            };
+
+            live_pixel_clk: live-pixel-clock {
+                compatible = "fixed-factor-clock";
+                #clock-cells = <0>;
+                clocks = <&clk_wiz_0 0>;
+                clock-mult = <1>;
+                clock-div = <2>;
+            };
+
+            clk_enable_gpio: gpio@a0020000 {
+                compatible = "xlnx,xps-gpio-1.00.a";
+                reg = <0x0 0xa0020000 0x0 0x10000>;
+                clocks = <&zynqmp_clk 71>;
+                gpio-controller;
+                #gpio-cells = <2>;
+                xlnx,all-inputs = <0>;
+                xlnx,all-outputs = <1>;
+                xlnx,dout-default = <0>;
+                xlnx,gpio-width = <2>;
+                xlnx,interrupt-present = <0>;
+                xlnx,is-dual = <0>;
+                xlnx,tri-default = <0>;
+            };
+
+            vtc_0: v-tc@a0010000 {
+                compatible = "xlnx,bridge-v-tc-6.1";
+                reg = <0x0 0xa0010000 0x0 0x10000>;
+                clocks = <&zynqmp_clk 71>, <&live_pixel_clk>;
+                clock-names = "s_axi_aclk", "clk";
+                xlnx,arbitrary-res-en;
+            };
+
+            avpg_0: avpg@a0000000 {
+                compatible = "xlnx,psdpdc-av-pat-gen-2.0";
+                reg = <0x0 0xa0000000 0x0 0x10000>;
+                clocks = <&audio_clk>, <&audio_clk>,
+                         <&zynqmp_clk 71>, <&clk_wiz_0 0>;
+                clock-names = "aud_clk", "aud_out_axi4s_aclk",
+                              "av_axi_aclk", "vid_out_axi4s_aclk";
+                clk-enable-gpios = <&clk_enable_gpio 0 0>,
+                                   <&clk_enable_gpio 1 0>;
+                xlnx,bridge = <&vtc_0>;
+                xlnx,ppc = <1>;
+                xlnx,bpc = <8>;
+                xlnx,video-format = <0>;
+
+                ports {
+                    #address-cells = <1>;
+                    #size-cells = <0>;
+
+                    port@0 {
+                        reg = <0>;
+                        avpg_out: endpoint {
+                            remote-endpoint = <&dpsub_live_in>;
+                        };
+                    };
+
+                    port@1 {
+                        reg = <1>;
+                        avpg_audio_out: endpoint {
+                            remote-endpoint = <&dpsub_live_audio_in>;
+                        };
+                    };
+                };
+            };
+
+            z486@a0040000 {
+                compatible = "nand2mario,z486-kv260-1.1";
+                reg = <0x0 0xa0040000 0x0 0x10000>;
+                nand2mario,buffer-size = <0x10000000>;
+                status = "okay";
+            };
+        };
+    };
+
+    fragment@1 {
+        target = <&zynqmp_dpsub>;
+
+        __overlay__ {
+            clocks = <&zynqmp_clk 28>, <&zynqmp_clk 17>,
+                     <&zynqmp_clk 16>, <&live_pixel_clk>,
+                     <&audio_clk>;
+            clock-names = "dp_apb_clk", "dp_aud_clk",
+                          "dp_vtc_pixel_clk_in", "dp_live_video_in_clk",
+                          "dp_live_audio_aclk";
+        };
+    };
+
+    fragment@2 {
+        target = <&live_video>;
+
+        __overlay__ {
+            dpsub_live_in: endpoint {
+                remote-endpoint = <&avpg_out>;
+            };
+        };
+    };
+
+    fragment@3 {
+        target = <&live_audio>;
+
+        __overlay__ {
+            dpsub_live_audio_in: endpoint {
+                remote-endpoint = <&avpg_audio_out>;
+            };
+        };
+    };
+};

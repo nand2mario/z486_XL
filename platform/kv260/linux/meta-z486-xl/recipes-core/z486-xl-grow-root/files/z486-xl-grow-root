@@ -1,0 +1,32 @@
+#!/bin/sh
+set -eu
+
+stamp=/var/lib/z486-xl/root-grown
+root_dev=$(readlink -f "$(findmnt -nro SOURCE /)")
+root_name=${root_dev#/dev/}
+root_sys=$(readlink -f "/sys/class/block/$root_name")
+
+if [ ! -f "$root_sys/partition" ]; then
+    echo "Root device $root_dev is not a partition; leaving its size unchanged" >&2
+    exit 1
+fi
+
+part_num=$(cat "$root_sys/partition")
+disk_name=$(basename "$(dirname "$root_sys")")
+disk_dev=/dev/$disk_name
+disk_sectors=$(blockdev --getsz "$disk_dev")
+part_start=$(cat "$root_sys/start")
+part_sectors=$(cat "$root_sys/size")
+
+# Leave tiny end-of-device alignment differences alone. The WIC root partition
+# is last, so any substantial trailing space belongs to it.
+if [ $((disk_sectors - part_start - part_sectors)) -gt 16384 ]; then
+    parted -s "$disk_dev" resizepart "$part_num" 100%
+    partx --update --nr "$part_num" "$disk_dev"
+    udevadm settle
+fi
+
+# resize2fs is safe and idempotent for an already-full online ext4 filesystem.
+resize2fs "$root_dev"
+install -d "$(dirname "$stamp")"
+touch "$stamp"

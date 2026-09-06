@@ -1,0 +1,4 @@
+# Partition 2 is resolved by the SD boot script using U-Boot part uuid.
+part /boot --source bootimg-partition --ondisk mmcblk --fstype=vfat --label BOOT --active --align 4096 --size 256 --use-uuid
+part / --source rootfs --ondisk mmcblk --fstype=ext4 --label writable --align 4096 --size 1024 --use-uuid
+bootloader --ptable msdos

@@ -1,0 +1,6 @@
+[submodule "deps/z486-pc"]
+	path = deps/z486-pc
+	url = https://github.com/nand2mario/z486_MiSTer.git
+[submodule "deps/zsst"]
+	path = deps/zsst
+	url = https://github.com/nand2mario/zSST.git

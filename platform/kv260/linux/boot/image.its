@@ -1,0 +1,37 @@
+/dts-v1/;
+/ {
+    description = "z486 XL KV260 SD Linux";
+    #address-cells = <1>;
+    images {
+        kernel {
+            description = "Linux arm64";
+            data = /incbin/("Image");
+            type = "kernel";
+            arch = "arm64";
+            os = "linux";
+            compression = "none";
+            load = <0x00200000>;
+            entry = <0x00200000>;
+            hash { algo = "sha256"; };
+        };
+        fdt-a {
+            data = /incbin/("kv260-revA.dtb");
+            type = "flat_dt";
+            arch = "arm64";
+            compression = "none";
+            hash { algo = "sha256"; };
+        };
+        fdt-b {
+            data = /incbin/("kv260-revB.dtb");
+            type = "flat_dt";
+            arch = "arm64";
+            compression = "none";
+            hash { algo = "sha256"; };
+        };
+    };
+    configurations {
+        default = "conf-kv260-revB";
+        conf-kv260-revA { kernel = "kernel"; fdt = "fdt-a"; };
+        conf-kv260-revB { kernel = "kernel"; fdt = "fdt-b"; };
+    };
+};

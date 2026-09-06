@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+set -euo pipefail
+usage() {
+    echo 'Usage: z486-run [--check] image.vhd [--ram-mb 16|32|64|128] [--audio-boost 1|2|4] [z486-main options]'
+    echo 'Games and ROMs: /root/games (override ROM location with Z486_ROM_DIR).'
+    echo 'Ctrl+Alt+Esc stops the guest and returns to the Linux console.'
+}
+check=0
+if [[ ${1:-} == --help ]]; then usage; exit 0; fi
+if [[ ${1:-} == --check ]]; then check=1; shift; fi
+if [[ $# == 0 ]]; then usage >&2; exit 2; fi
+disk=$(realpath -- "$1")
+shift
+[[ -f "$disk" && -r "$disk" ]] || { echo 'VHD is not a readable regular file' >&2; exit 1; }
+rom_dir=${Z486_ROM_DIR:-/root/games}
+for rom in boot0.rom boot1.rom; do
+    [[ -r "$rom_dir/$rom" ]] || { echo "Missing ROM: $rom_dir/$rom" >&2; exit 1; }
+done
+args=(--disk "$disk" "$@")
+have_keyboard=0
+have_mouse=0
+for arg in "$@"; do
+    case "$arg" in
+        --keyboard) have_keyboard=1 ;;
+        --mouse) have_mouse=1 ;;
+        --stop|--no-wait|--disk)
+            echo "Lifecycle option not allowed through launcher: $arg" >&2; exit 2 ;;
+    esac
+done
+# Use udev classification, not /proc's 'kbd' handler: some mice advertise that
+# handler without providing a usable keyboard (seen with Logitech receivers).
+shopt -s nullglob
+for event in /dev/input/event*; do
+    props=$(udevadm info --query=property --name="$event" 2>/dev/null || true)
+    if (( ! have_keyboard )) && [[ $'\n'$props$'\n' == *$'\nID_INPUT_KEYBOARD=1\n'* ]]; then
+        args+=(--keyboard "$event"); have_keyboard=1
+    fi
+    if (( ! have_mouse )) && [[ $'\n'$props$'\n' == *$'\nID_INPUT_MOUSE=1\n'* ]]; then
+        args+=(--mouse "$event"); have_mouse=1
+    fi
+done
+args+=("$rom_dir/boot0.rom" "$rom_dir/boot1.rom")
+if (( check )); then printf '%q ' z486-main "${args[@]}"; printf '\n'; exit 0; fi
+[[ $EUID == 0 ]] || { echo 'Run as root' >&2; exit 1; }
+for tool in z486-main z486-drm z486-kv260ctl flock pgrep; do command -v "$tool" >/dev/null; done
+exec 9>/run/z486-run.lock
+flock -n 9 || { echo 'Another launcher is running' >&2; exit 1; }
+if pgrep -x z486-main >/dev/null || pgrep -x z486-drm >/dev/null; then
+    echo 'An existing guest/display process is running; stop it first' >&2; exit 1
+fi
+main_pid=''
+drm_pid=''
+cleanup() {
+    status=$?
+    trap - EXIT INT TERM HUP
+    # Stop and drain the guest before taking away its display or FPGA fabric.
+    for pid in "$main_pid" "$drm_pid"; do
+        [[ -n "$pid" ]] || continue
+        kill -TERM "$pid" 2>/dev/null || true
+        wait "$pid" 2>/dev/null || true
+    done
+    # Removing the flat application restores the boot-time DisplayPort driver
+    # and its framebuffer console. z486-main's TERM handler has already drained
+    # write-back state before this reconfiguration.
+    if ! z486-kv260ctl unload; then
+        echo 'Warning: could not restore the Linux display; reboot may be required' >&2
+    fi
+    exit "$status"
+}
+echo 'Press Ctrl+Alt+Esc to stop z486 and return to the Linux console.'
+z486-kv260ctl load
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+z486-main "${args[@]}" &
+main_pid=$!
+z486-drm red 1920x1080 &
+drm_pid=$!
+wait -n "$main_pid" "$drm_pid"

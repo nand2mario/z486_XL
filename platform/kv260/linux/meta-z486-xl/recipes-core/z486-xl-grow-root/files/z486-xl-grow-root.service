@@ -1,0 +1,13 @@
+[Unit]
+Description=Grow the z486 XL root filesystem to fill the SD card
+After=local-fs.target
+Before=getty.target systemd-user-sessions.service
+ConditionPathExists=!/var/lib/z486-xl/root-grown
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/z486-xl-grow-root
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

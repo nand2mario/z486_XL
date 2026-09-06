@@ -1,0 +1,12 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+    fragment@0 {
+        target = <&fpga_full>;
+
+        __overlay__ {
+            firmware-name = "z486_console.bit.bin";
+        };
+    };
+};

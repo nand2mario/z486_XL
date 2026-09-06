@@ -1,0 +1,13 @@
+[Unit]
+Description=Load the z486 XL Linux-console FPGA shell
+Requires=dfx-mgr.service
+After=dfx-mgr.service
+Before=fancontrol.service getty@tty1.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/z486-kv260ctl stock
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

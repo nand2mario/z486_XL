@@ -1,0 +1,11 @@
+{
+  "cma_size": "0x10000000",
+  "regions": [
+    {"name": "guest", "offset": "0x00000000", "size": "0x08000000"},
+    {"name": "reserved0", "offset": "0x08000000", "size": "0x02000000"},
+    {"name": "zsst_fbi", "offset": "0x0a000000", "size": "0x00800000"},
+    {"name": "zsst_tmu", "offset": "0x0a800000", "size": "0x00800000"},
+    {"name": "reserved", "offset": "0x0b000000", "size": "0x04800000"},
+    {"name": "packed_vga", "offset": "0x0f800000", "size": "0x00800000"}
+  ]
+}

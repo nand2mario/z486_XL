@@ -1,0 +1,14 @@
+# fancontrol configuration file.
+# Keep the fan stopped at cool idle, then use a higher start pulse before
+# settling to the minimum sustainable running duty.
+
+INTERVAL=5
+FCTEMPS=/sys/devices/platform/pwm-fan/hwmon/hwmon[[:print:]]*/pwm1=/sys/devices/platform/ams/hwmon/hwmon[[:print:]]*/temp1_input
+FCFANS=/sys/devices/platform/pwm-fan/hwmon/hwmon[[:print:]]*/pwm1=/sys/devices/platform/pwm-fan/hwmon/hwmon[[:print:]]*/pwm1
+MINTEMP=/sys/devices/platform/pwm-fan/hwmon/hwmon[[:print:]]*/pwm1=40
+MAXTEMP=/sys/devices/platform/pwm-fan/hwmon/hwmon[[:print:]]*/pwm1=50
+MINSTART=/sys/devices/platform/pwm-fan/hwmon/hwmon[[:print:]]*/pwm1=30
+MINSTOP=/sys/devices/platform/pwm-fan/hwmon/hwmon[[:print:]]*/pwm1=15
+MINPWM=/sys/devices/platform/pwm-fan/hwmon/hwmon[[:print:]]*/pwm1=1
+MAXPWM=/sys/devices/platform/pwm-fan/hwmon/hwmon[[:print:]]*/pwm1=255
+AVERAGE=/sys/devices/platform/pwm-fan/hwmon/hwmon[[:print:]]*/pwm1=4
