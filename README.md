@@ -13,6 +13,10 @@ mouse input, DisplayPort/HDMI output, and USB-drive automounting. Tomb Raider
 is currently the only 3dfx game tested; this remains an
 early compatibility and performance release.
 
+The [zSST design write-up](https://nand2mario.github.io/posts/2026/zsst-voodoo/)
+explains how the Voodoo graphics implementation works and its integration into
+the complete FPGA PC, with performance results and Tomb Raider screenshots.
+
 ## Install a release image
 
 Download the latest `z486_XL-sd-kv260-*.wic.xz` from
