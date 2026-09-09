@@ -1,7 +1,7 @@
 # z486 XL: FPGA 486 PC with Voodoo Graphics
 
 z486 XL is an experimental FPGA PC for the [AMD Kria KV260 Vision AI
-Starter Kit](https://www.amd.com/en/products/system-on-modules/kria/k26/kv260-vision-ai-starter-kit.html).
+Starter Kit](https://www.amd.com/en/products/system-on-modules/kria/k26/kv260-vision-starter-kit.html).
 It combines the [z486](https://github.com/nand2mario/z486) PC with the
 [zSST](https://github.com/nand2mario/zSST) Voodoo Graphics implementation and
 uses the KV260's onboard DDR, so no external SDRAM module or FPGA add-on board
